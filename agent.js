@@ -3,10 +3,12 @@ import { searchGoogle, googleSearchToolDefinition } from "./tools.js";
 
 const ai = new GoogleGenAI({});
 
+// A helper function that forces our code to pause execution for a set number of milliseconds
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function runAgent(userGoal) {
     console.log(`[AGENT] Starting mission: "${userGoal}"`);
 
-    // 1. FIXED SCHEMA: Turn 1 must use the 'parts' array structure
     let memory = [
         { 
             role: "user", 
@@ -21,16 +23,43 @@ export async function runAgent(userGoal) {
         currentTurn++;
         console.log(`\n[AGENT] --- Starting Turn ${currentTurn} ---`);
 
-        // A. Fire the network request
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: memory,
-            config: {
-                tools: [{ functionDeclarations: [googleSearchToolDefinition] }]
-            }
-        });
+        let response;
+        let retries = 0;
+        const maxRetries = 3;
+        let baseDelay = 2000; // Start by waiting 2 seconds if it fails
 
-        // 2. FIXED EXTRACTION: Safe structural reading
+        // PRODUCTION CORE: Retry Loop for 503 / 429 API Overload Handling
+        while (retries < maxRetries) {
+            try {
+                response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: memory,
+                    config: {
+                        tools: [{ functionDeclarations: [googleSearchToolDefinition] }]
+                    }
+                });
+                // If the request succeeds, break out of this inner retry loop immediately!
+                break; 
+            } catch (error) {
+                retries++;
+                // Check if the error looks like a temporary server overload
+                if (error.message.includes("503") || error.message.includes("high demand") || error.message.includes("UNAVAILABLE")) {
+                    console.warn(`[WARNING] Gemini server overloaded (503). Retry attempt ${retries}/${maxRetries} in ${baseDelay / 1000}s...`);
+                    await wait(baseDelay);
+                    baseDelay *= 2; // Double the wait time for the next attempt (Exponential Backoff)
+                } else {
+                    // If it's a completely different error (like a schema error), don't retry, just throw it
+                    throw error;
+                }
+            }
+        }
+
+        // If all retries failed and we have no response object, gracefully exit the turn
+        if (!response) {
+            console.error("[CRITICAL] Gemini model is completely unavailable after multiple retries.");
+            return "Mission failed due to upstream AI provider downtime.";
+        }
+
         const candidate = response.candidates?.[0]?.content;
         if (!candidate) {
             console.log("[ERROR] Received an empty response from Gemini.");
@@ -38,16 +67,14 @@ export async function runAgent(userGoal) {
         }
 
         const aiMessageText = candidate.parts?.[0]?.text || "";
-        const functionCall = candidate.parts?.[0]?.functionCall; // Note: Singular 'functionCall' in new SDK
+        const functionCall = candidate.parts?.[0]?.functionCall;
 
-        // B. Save Gemini's exact response object straight into memory history
         memory.push(candidate);
 
         if (aiMessageText) {
             console.log(`[AI THOUGHT]: ${aiMessageText}`);
         }
 
-        // C. Check if the AI wants to use our live tool
         if (functionCall) {
             const toolName = functionCall.name;
             const toolArgs = functionCall.args;
@@ -57,7 +84,6 @@ export async function runAgent(userGoal) {
             if (toolName === "search_google") {
                 const searchResultText = await searchGoogle(toolArgs.query);
 
-                // 3. FIXED TOOL SCHEMA: Save the tool result the exact way Gemini expects it
                 memory.push({
                     role: "tool",
                     parts: [{

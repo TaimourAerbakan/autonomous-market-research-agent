@@ -1,7 +1,8 @@
+import "dotenv/config"; // Loads the .env file keys into system memory
 import { runAgent } from "./agent.js";
 
 // Define the mission you want to give your autonomous agent
-const startingGoal = "Research Taimour Aerbakan";
+const startingGoal = "";
 
 // Execute the agent and handle the final output
 async function startSystem() {
