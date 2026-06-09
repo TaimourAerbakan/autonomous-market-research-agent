@@ -1,17 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
-// 1. IMPORT CHANGES: Pull in both search and file tool assets
-import { 
-    searchGoogle, 
-    googleSearchToolDefinition, 
-    saveFile, 
-    saveFileToolDefinition 
-} from "./tools.js";
+import { searchGoogle, googleSearchToolDefinition, saveFile, saveFileToolDefinition } from "./tools.js";
 
 const ai = new GoogleGenAI({});
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function runAgent(userGoal) {
-    console.log(`[AGENT] Starting mission: "${userGoal}"`);
+// PRODUCTION UPGRADE: The function now takes an agentName, systemInstruction, and an array of allowedTools
+export async function runAgent(agentName, systemInstruction, allowedTools, userGoal) {
+    console.log(`[${agentName}] Booting up with mission: "${userGoal}"`);
 
     let memory = [
         { 
@@ -25,7 +20,7 @@ export async function runAgent(userGoal) {
 
     while (currentTurn < maxTurns) {
         currentTurn++;
-        console.log(`\n[AGENT] --- Starting Turn ${currentTurn} ---`);
+        console.log(`\n[${agentName}] --- Starting Turn ${currentTurn} ---`);
 
         let response;
         let retries = 0;
@@ -35,23 +30,20 @@ export async function runAgent(userGoal) {
         while (retries < maxRetries) {
             try {
                 response = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
+                    model: 'gemini-2.5-flash-lite',
                     contents: memory,
                     config: {
-                        // 2. DECLARATION CHANGES: Both tools are fed to Gemini simultaneously
-                        tools: [{ 
-                            functionDeclarations: [
-                                googleSearchToolDefinition, 
-                                saveFileToolDefinition
-                            ] 
-                        }]
+                        // Pass the custom persona instruction to Gemini
+                        systemInstruction: systemInstruction,
+                        // Pass only the tools this specific agent is allowed to use
+                        tools: allowedTools.length > 0 ? [{ functionDeclarations: allowedTools }] : undefined
                     }
                 });
                 break; 
             } catch (error) {
                 retries++;
                 if (error.message.includes("503") || error.message.includes("high demand") || error.message.includes("UNAVAILABLE")) {
-                    console.warn(`[WARNING] Gemini server overloaded (503). Retry attempt ${retries}/${maxRetries} in ${baseDelay / 1000}s...`);
+                    console.warn(`[WARNING] [${agentName}] Server overloaded (503). Retry ${retries}/${maxRetries} in ${baseDelay / 1000}s...`);
                     await wait(baseDelay);
                     baseDelay *= 2;
                 } else {
@@ -61,62 +53,49 @@ export async function runAgent(userGoal) {
         }
 
         if (!response) {
-            console.error("[CRITICAL] Gemini model is completely unavailable after multiple retries.");
-            return "Mission failed due to upstream AI provider downtime.";
+            return `[${agentName}] Failed to respond due to connection loss.`;
         }
 
         const candidate = response.candidates?.[0]?.content;
         
         if (!candidate) {
-            console.log("[ERROR] Received an empty response from Gemini.");
-            return "Failed to get an answer.";
+            return `[${agentName}] Returned an empty state payload.`;
         }
 
-        // FIX: Ensure there is only ONE question mark and ONE dot: ?.
+        // FIX: Use clean single-dot optional chaining
         const aiMessageText = candidate.parts?.[0]?.text || "";
         const functionCall = candidate.parts?.[0]?.functionCall;
-
+        
         memory.push(candidate);
 
         if (aiMessageText) {
-            console.log(`[AI THOUGHT]: ${aiMessageText}`);
+            console.log(`[${agentName} THOUGHT]: ${aiMessageText}`);
         }
 
-        // 3. ROUTING CHANGES: Check and execute based on which tool name the AI selected
         if (functionCall) {
             const toolName = functionCall.name;
             const toolArgs = functionCall.args;
 
-            console.log(`[AI ACTION]: Wants to execute tool "${toolName}" with arguments:`, toolArgs);
+            console.log(`[${agentName} ACTION]: Executing tool "${toolName}"...`);
 
             if (toolName === "search_google") {
-                // Route to live internet tool
                 const searchResultText = await searchGoogle(toolArgs.query);
-
                 memory.push({
                     role: "tool",
-                    parts: [{
-                        functionResponse: { name: "search_google", response: { result: searchResultText } }
-                    }]
+                    parts: [{ functionResponse: { name: "search_google", response: { result: searchResultText } } }]
                 });
-
             } else if (toolName === "save_file") {
-                // Route to local file saver tool (New!)
                 const saveResultText = saveFile(toolArgs.filename, toolArgs.content);
-
                 memory.push({
                     role: "tool",
-                    parts: [{
-                        functionResponse: { name: "save_file", response: { result: saveResultText } }
-                    }]
+                    parts: [{ functionResponse: { name: "save_file", response: { result: saveResultText } } }]
                 });
             }
         } else {
-            console.log("\n[AGENT] Mission accomplished! Final Answer generated.");
+            console.log(`\n[${agentName}] Task Complete! Handing off output.`);
             return aiMessageText;
         }
     }
 
-    console.log("\n[GUARDRAIL ALERT] Reached maximum allowed turns.");
-    return "Agent timed out before finding a final conclusion.";
+    return `[${agentName}] Reached maximum operation limits.`;
 }
