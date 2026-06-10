@@ -1,5 +1,6 @@
 import { tavily } from "@tavily/core";
 import fs from "fs"; // Built-in Node.js module to read/write files on your disk
+import path from "path"; // 1. Built-in utility to map directory locations accurately
 
 const tvly = tavily();
 
@@ -25,11 +26,13 @@ export async function searchGoogle(query) {
 
 // Tool 2: Local File Saver (New!)
 export function saveFile(filename, content) {
-    console.log(`[SYSTEM] Writing output to local hard drive: "${filename}"...`);
+    // 2. process.cwd() guarantees it pins your active root project folder
+    const absoluteDestinationPath = path.join(process.cwd(), filename);
+    
+    console.log(`[SYSTEM] Forcing write to exact hard drive location: "${absoluteDestinationPath}"...`);
     try {
-        // fs.writeFileSync writes a file instantly to your active project directory
-        fs.writeFileSync(filename, content, "utf-8");
-        return `Success: The file "${filename}" has been saved completely to the hard drive.`;
+        fs.writeFileSync(absoluteDestinationPath, content, "utf-8");
+        return `Success: The file has been written completely to "${absoluteDestinationPath}"`;
     } catch (error) {
         console.error("[TOOL ERROR] File system write failed:", error.message);
         return `Failed to save file due to error: ${error.message}`;

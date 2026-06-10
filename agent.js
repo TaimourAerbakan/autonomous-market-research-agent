@@ -30,7 +30,7 @@ export async function runAgent(agentName, systemInstruction, allowedTools, userG
         while (retries < maxRetries) {
             try {
                 response = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash-lite',
+                    model: 'gemini-2.5-flash',
                     contents: memory,
                     config: {
                         // Pass the custom persona instruction to Gemini
