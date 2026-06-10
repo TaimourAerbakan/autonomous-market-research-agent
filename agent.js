@@ -22,6 +22,10 @@ export async function runAgent(agentName, systemInstruction, allowedTools, userG
         currentTurn++;
         console.log(`\n[${agentName}] --- Starting Turn ${currentTurn} ---`);
 
+        // PRODUCTION THROTTLING: Wait 3 seconds before firing the next turn request
+        // This stops the agent from executing in microsecond bursts and blowing your RPM quota
+        await wait(3000); 
+
         let response;
         let retries = 0;
         const maxRetries = 3;
